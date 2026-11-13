@@ -1,0 +1,43 @@
+# movie-togher 运行配置(design.md 第 7 节)
+# 修改后需重启服务生效(需求验收 17)。
+# 环境变量覆盖规则:MOVIE_TOGETHER__<节>__<键>,如 MOVIE_TOGETHER__LIMITS__MAX_ROOMS=8
+
+[server]
+host = "0.0.0.0"          # 监听地址(局域网访问需 0.0.0.0)
+port = 8000
+
+[frontend]
+# 前端站点地址,用于拼接邀请链接 {base_url}/rooms/{room_id};
+# 为空时邀请链接仅返回相对路径,由前端自行补全。
+base_url = ""
+
+[cors]
+# 前端 origin 列表;分离部署下按实际前端地址收紧,如 ["http://192.168.1.10:8001"]
+allowed_origins = ["*"]
+
+[limits]
+max_rooms = 5                      # 最大房间数(超出拒绝创建,需求第 2 节)
+max_members_per_room = 10          # 每房间最大在线人数(满员拒绝加入,决策 T13)
+max_upload_bytes = 4294967296      # 上传大小上限:4 GiB
+
+[room]
+empty_expire_seconds = 600         # 全员离开后 10 分钟过期(需求 3.1.7)
+
+[heartbeat]
+client_ping_seconds = 30           # 客户端心跳周期(需求 3.6.2)
+server_timeout_seconds = 90        # 服务端判死超时(需求 3.6.2)
+scan_interval_seconds = 15         # 服务端心跳扫描周期(design.md 4.4)
+
+[cleanup]
+scan_interval_seconds = 60         # 清理任务扫描周期(design.md 4.9)
+temp_file_max_age_seconds = 3600   # 上传临时文件超龄兜底(design.md 4.9)
+
+[storage]
+data_dir = "data"                  # SQLite 与视频文件根目录(相对工作目录)
+
+[playback]
+allowed_rate_min = 0.25            # 倍速服务端校验范围(sync-protocol.md §2)
+allowed_rate_max = 3.0
+
+[log]
+level = "info"

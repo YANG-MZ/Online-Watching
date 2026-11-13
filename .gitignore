@@ -8,3 +8,11 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Runtime data (SQLite + video files + logs, design.md section 4.1)
+data/
+
+# Node
+node_modules/
+web/dist/
+

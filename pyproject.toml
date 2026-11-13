@@ -1,7 +1,23 @@
 [project]
 name = "movie-togher"
 version = "0.1.0"
-description = "Add your description here"
+description = "多人在线同步观影平台(doc/requirements.md V1.1)"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "fastapi>=0.162.6",
+    "loguru>=0.8.0",
+    "pydantic>=2.14.3",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=9.2.0",
+    "pytest-asyncio>=1.5.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["server/tests"]
+asyncio_mode = "auto"
