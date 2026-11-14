@@ -58,12 +58,26 @@ class Member:
 
 
 @dataclass
+class KnownUser:
+    """历史加入者记录:掉线移除后保留,供重连沿用昵称与 joined_at。
+
+    joined_at 为首次加入时刻,用于房主移交"加入时间最早"排序
+    (需求 3.1.5,决策 T15);credentials 由 Room 单独维护。
+    """
+
+    user_id: str
+    nickname: str
+    joined_at: float
+
+
+@dataclass
 class Room:
     """房间内存对象(design.md 4.2)。
 
-    members 仅含在线成员;known_users 保留历史加入者的 joined_at,
-    供重连沿用与移交排序;empty_since 非空表示处于空房过期倒计时
-    (需求 3.1.7,决策 T14 可复活)。
+    members 仅含在线成员;known_users 保留历史加入者(昵称与 joined_at),
+    credentials 维护 session_token → user_id 映射,供 WS 重连鉴权
+    (需求 3.7:凭 token 恢复身份);empty_since 非空表示处于空房过期
+    倒计时(需求 3.1.7,决策 T14 可复活)。
     """
 
     room_id: str
@@ -71,7 +85,8 @@ class Room:
     created_at: float
     playback: PlaybackState = field(default_factory=PlaybackState)
     members: dict[str, Member] = field(default_factory=dict)
-    known_users: dict[str, float] = field(default_factory=dict)
+    known_users: dict[str, KnownUser] = field(default_factory=dict)
+    credentials: dict[str, str] = field(default_factory=dict)  # token → user_id
     video: VideoMeta | None = None
     uploading: bool = False  # 上传互斥锁(design.md 4.7)
     empty_since: float | None = None
