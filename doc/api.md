@@ -4,7 +4,7 @@
 | --- | --- |
 | 文档版本 | A1.0 |
 | 更新日期 | 2026-11-14 |
-| 需求依据 | doc/requirements.md(V1.1) |
+| 需求依据 | doc/requirements.md(V1.2) |
 | 配套文档 | doc/design.md(总体方案)、doc/sync-protocol.md(同步协议) |
 
 ---

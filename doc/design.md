@@ -2,9 +2,9 @@
 
 | 项目名称 | movie-togher |
 | --- | --- |
-| 文档版本 | T1.0 |
-| 更新日期 | 2026-11-14 |
-| 需求依据 | doc/requirements.md(V1.1,唯一需求依据) |
+| 文档版本 | T1.1 |
+| 更新日期 | 2026-11-15 |
+| 需求依据 | doc/requirements.md(V1.2,唯一需求依据) |
 | 配套文档 | doc/api.md(接口与 WS 协议)、doc/sync-protocol.md(播放同步协议) |
 | 阶段 | 技术方案设计,不含业务代码 |
 
@@ -12,7 +12,7 @@
 
 ## 1. 文档说明
 
-本方案以 doc/requirements.md(V1.1)为唯一需求依据,不改动作何已确认的业务规则。需求中存在歧义或需技术选型之处,已在设计前经用户确认,决策记录见第 10 节。
+本方案以 doc/requirements.md(V1.2)为唯一需求依据,不改动作何已确认的业务规则。需求中存在歧义或需技术选型之处,已在设计前经用户确认,决策记录见第 10 节。
 
 本阶段交付三份文档:
 
@@ -34,7 +34,7 @@
 │ 浏览器 A │ ──────────▶ │  │   后端 FastAPI(单进程)      │    │
 │ (房主)   │ ◀────────── │  │   uvicorn workers=1          │    │
 │          │  WebSocket │  │                              │    │
-│  React   │ ◀────────▶ │  │  ┌────────┐  ┌───────────┐  │    │
+│  Vue 3   │ ◀────────▶ │  │  ┌────────┐  ┌───────────┐  │    │
 │  SPA ×N  │            │  │  │ HTTP   │  │ WS 端点    │  │    │
 │(≤10人/房)│  HTTP      │  │  │ API    │  │ (房间信令) │  │    │
 │          │  Range     │  │  └────────┘  └───────────┘  │    │
@@ -91,9 +91,9 @@
 | T2 | Python 版本 | 3.12(仓库 `.python-version` 已定) | — | — |
 | T3 | 数据库访问 | 标准库 `sqlite3` + WAL 模式,写入经 `asyncio.to_thread` | aiosqlite、SQLModel | 元数据写入频率极低(建房/上传/清理),无 ORM 必要,零依赖 |
 | T4 | 部署形态 | **前后端分离部署**(用户确认) | 后端托管前端静态文件 | 用户决策;后端需配置 CORS |
-| T5 | 前端构建 | Vite + React 18 + TypeScript | CRA、Rsbuild | 事实标准,开发体验好 |
-| T6 | 前端状态 | zustand(带 persist 中间件) | Context+useReducer、Redux | 轻量;localStorage 持久化开箱即用(音量/静音/会话) |
-| T7 | 前端路由 | react-router | 手写路由 | 稳妥,两个路由也低成本 |
+| T5 | 前端构建 | Vue 3 + Vite + TypeScript(用户决策,2026-11-15,见 T17) | — | 组合式 API;Vite 开发体验好 |
+| T6 | 前端状态 | Pinia(持久化用 pinia-plugin-persistedstate) | 组合式 API 手写 store | 官方推荐;localStorage 持久化开箱即用(音量/静音/会话) |
+| T7 | 前端路由 | vue-router | 手写路由 | 官方配套,两个路由也低成本 |
 | T8 | 上传协议 | `PUT` 原始字节流 + `X-Filename` 头,前端 XHR(`upload.onprogress`) | multipart/form-data | 流式落盘零解析开销;fetch 无上传进度,XHR 有;Content-Length 可预检大小上限 |
 | T9 | 视频下发 | 手写 Range 处理(206/416/HEAD) | Starlette FileResponse 内建 Range | 行为不与框架版本耦合,边界完全自控、可测 |
 | T10 | 配置 | `config.toml` + 内置 `tomllib` 读取 + 环境变量覆盖 | YAML、.env | Python 3.11+ 内置解析零依赖;可读性好,满足"配置文件可修改"(验收 17) |
@@ -124,16 +124,17 @@
 │   │   ├── cleanup.py      # 后台清理协程
 │   │   └── security.py     # ID/token 生成(secrets)、token 校验
 │   └── tests/              # pytest
-├── web/                    # 前端(Vite + React + TS)
+├── web/                    # 前端(Vue 3 + Vite + TS)
 │   ├── src/
-│   │   ├── main.tsx
+│   │   ├── main.ts         # 应用入口(createApp + Pinia + Router)
+│   │   ├── App.vue         # 根组件(<router-view>)
 │   │   ├── api/http.ts     # HTTP 客户端
 │   │   ├── api/ws.ts       # WS 客户端(心跳+指数退避重连+踢旧处理)
 │   │   ├── sync/           # 时钟估计、同步引擎、校准器(sync-protocol.md 的实现)
-│   │   ├── stores/         # zustand:session / room / preference / upload
-│   │   ├── pages/Home/     # 创建/加入
-│   │   ├── pages/Room/     # 房间页
-│   │   └── components/     # VideoPlayer、MemberList、UploadPanel 等
+│   │   ├── stores/         # Pinia:session / room / preference / upload
+│   │   ├── views/Home.vue  # 创建/加入
+│   │   ├── views/Room.vue  # 房间页
+│   │   └── components/     # VideoPlayer、MemberList、UploadPanel 等(.vue 单文件组件)
 │   └── package.json
 └── data/                   # 运行时目录(gitignore):db + videos/ + tmp/
 ```
@@ -348,7 +349,7 @@ CREATE INDEX IF NOT EXISTS idx_videos_room ON videos(room_id);
 | `/` | Home | 昵称输入;「创建房间」;「通过链接/房间 ID 加入」;错误提示(房间不存在/已满/达到上限) |
 | `/rooms/:roomId` | Room | 播放器、控制条(播放/暂停/进度条/倍速,**成员端只读**)、成员列表(房主标记)、上传面板(房主,进度条+错误文案)、邀请链接复制、退出按钮、解散按钮(房主,二次确认)、连接状态指示(在线/重连中/已断开)、被踢/解散通知浮层 |
 
-### 6.2 状态管理(zustand)
+### 6.2 状态管理(Pinia)
 
 | store | 内容 | 持久化 |
 | --- | --- | --- |
@@ -460,7 +461,7 @@ npx serve dist -l 8001        # 轻量方案
 | 1 多浏览器进同一房间 | 手动 + WS 仿真测试 |
 | 2 视频可播放且 Range 生效 | pytest:206/Content-Range/分片请求 |
 | 3/4/5 播放/暂停/跳转/倍速同步 | pytest:WS 双连接,房主发消息断言广播与状态结算 |
-| 6 音量/静音独立且持久 | 手动(前端行为)+ Vitest preference store |
+| 6 音量/静音独立且持久 | 手动(前端行为)+ Vitest preference store(Pinia) |
 | 7 中途加入定位进度 | pytest:auth_ok 快照推算位置正确 |
 | 8 断网重连不重复 | pytest:断开重连后 members 去重、joined_at 沿用 |
 | 9 越权被拒(403) | pytest:普通成员/伪造 token 调房主接口 |
@@ -485,10 +486,11 @@ npx serve dist -l 8001        # 轻量方案
 | T14 | 空房复活 | **允许**:10 分钟窗口内 WS auth 成功即取消过期计时 |
 | T15 | 同 token 第二条 WS | **新连接踢旧连接**(kicked/duplicate_connection),身份单活,joined_at 沿用 |
 | T16 | 前端部署形态 | **前后端分离部署**(后端 CORS + 前端构建注入后端地址) |
+| T17 | 前端框架变更(2026-11-15) | **Vue 3 + Vite + TypeScript**(用户决策,替代 T5 原推荐 React);T6 状态管理随之改为 Pinia、T7 路由改为 vue-router;后端与协议不变 |
 
 其余技术选型(第 3 节 T1~T12)为推荐方案,实现阶段如需替换不影响已确认业务规则。
 
 ## 11. 遗留事项
 
-- doc/requirements.md 第 1 行大标题"V1.0"与头部表格"V1.1"不一致(排版笔误),建议用户手动修正;
+- doc/requirements.md 第 1 行大标题"V1.0"与头部表格版本不一致的排版笔误已随 V1.2 修正(2026-11-15);
 - 全屏偏好的浏览器手势限制落地方式见 6.2,不改变需求 3.5 规则本身。

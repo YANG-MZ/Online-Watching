@@ -4,7 +4,7 @@
 | --- | --- |
 | 文档版本 | I1.0 |
 | 更新日期 | 2026-11-14 |
-| 需求依据 | doc/requirements.md(V1.1) |
+| 需求依据 | doc/requirements.md(V1.2) |
 | 设计依据 | doc/design.md(T1.0)、doc/api.md(A1.0)、doc/sync-protocol.md(S1.0) |
 
 本文档按"文档驱动"方式记录实现过程:每个实现阶段先在 §2 阶段总表登记范围,完成后在对应小节记录实现说明、实现决策与测试结果,作为后续阶段的依据。
@@ -29,7 +29,7 @@
 | **P2** | **room_manager 领域服务:生命周期 / 成员 / 移交 / 快照 / 复活** | ✅ **完成(2026-11-15,见 §4)** |
 | **P3** | **适配层:api(HTTP 端点)/ ws(WS 端点与广播)/ cleanup(清理任务)+ main 装配** | ✅ **完成(2026-11-15,见 §5)** |
 | **P4** | **装配与集成:build_app + lifespan 集成测试(重启即清理/配置生效/端到端)** | ✅ **完成(2026-11-15,见 §6)** |
-| P5 | 前端 web/:Vite + React + TS(同步引擎按 sync-protocol §4) | 待开始 |
+| P5 | 前端 web/:Vue 3 + Vite + TS(同步引擎按 sync-protocol §4;2026-11-15 用户决策由 React 变更为 Vue 3,见 requirements 附录 B N2 / design T17) | 待开始 |
 
 ---
 
@@ -187,5 +187,5 @@ main.build_app 在 P3 已完成全链路装配,本阶段为**真实 lifespan 下
 ## 7. 对后续阶段的输入(P5 前端)
 
 - 后端接口契约以 doc/api.md 为准,消息结构已在 test_api/test_ws 中实测锁定;前端联调可直接复用集成测试中的调用序列(test_integration.py 的完整旅程即前端的用户路径);
-- 前端实现按 design.md 第 6 节(Vite + React + TS、zustand 四 store、WS 客户端指数退避重连)与 doc/sync-protocol.md §4(时钟估计、校准器参数表);
+- 前端实现按 design.md 第 6 节(Vue 3 + Vite + TS、**Pinia 四 store**、vue-router、WS 客户端指数退避重连)与 doc/sync-protocol.md §4(时钟估计、校准器参数表);框架为用户决策变更为 Vue 3(2026-11-15,requirements N2 / design T17);
 - 开发环境:Vite proxy 将 `/api`、`/ws`、`/media` 转发至 127.0.0.1:8000(design.md 2.2),后端 CORS 默认 `*` 即可直连。
