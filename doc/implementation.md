@@ -28,7 +28,7 @@
 | **P1** | **最底层业务:playback 结算服务 + SQLite 仓储 + LocalVideoStorage** | ✅ **完成(2026-11-14,见 §3)** |
 | **P2** | **room_manager 领域服务:生命周期 / 成员 / 移交 / 快照 / 复活** | ✅ **完成(2026-11-15,见 §4)** |
 | **P3** | **适配层:api(HTTP 端点)/ ws(WS 端点与广播)/ cleanup(清理任务)+ main 装配** | ✅ **完成(2026-11-15,见 §5)** |
-| P4 | 装配与集成:main 工厂接线(_make_* 槽位)+ TestClient 集成测试 | 待开始 |
+| **P4** | **装配与集成:build_app + lifespan 集成测试(重启即清理/配置生效/端到端)** | ✅ **完成(2026-11-15,见 §6)** |
 | P5 | 前端 web/:Vite + React + TS(同步引擎按 sync-protocol §4) | 待开始 |
 
 ---
@@ -158,8 +158,34 @@
 2. 测试侧错误若干:starlette 1.10 的 `websocket_connect` 必须以 `with`/`enter_context` 使用(新版 Session 在 `__enter__` 才启动 portal);断言顺序错误——`member_joined` 广播在成员 WS auth 后才发出,`video_ready` 广播不补发(先于上线完成的上传,上线者从快照得知视频);若干 `t=`/`now=` 参数名笔误与字节数不一致;
 3. 调试手段沉淀:pytest 挂起用 `faulthandler.dump_traceback_later(…, file=…)` 写文件抓主线程栈(转储会被 pytest capture 吞掉,必须显式指定文件);管道尾 `echo $?` 会掩盖真实退出码,需以文件重定向取 timeout 真实退出码。
 
-## 6. 对后续阶段的输入(P4 依赖)
+## 6. P4:装配与集成测试(2026-11-15)
 
-- main.build_app 已完成全链路装配(lifespan 启动清理 + 周期清理 + 心跳扫描),P4 重点为**集成测试**:带 lifespan 的 TestClient 验证"重启即清理"(需求 4.5)、配置覆盖(验收 17)、多房间并发上限(验收 16)等跨层场景;
-- P3 测试装置(conftest.py 的 p3_env)不带 lifespan,可复用为集成测试底座并按需开启 lifespan;
-- 前端 P5 按 design.md 第 6 节与 doc/sync-protocol.md §4 实现,后端接口契约以 doc/api.md 为准,服务端消息结构已在 test_api/test_ws 中实测锁定。
+### 6.1 实现范围(server/tests/test_integration.py + 小修补)
+
+main.build_app 在 P3 已完成全链路装配,本阶段为**真实 lifespan 下的集成测试**(短周期定时器配置:空房过期 1s / 心跳超时 1s / 各扫描 0.2s,用例数秒完成):
+
+| 用例 | 覆盖验收 |
+| --- | --- |
+| `test_full_journey` | 完整旅程串联:创建→上线→上传(video_ready)→成员上线(快照带视频)→播放同步→HTTP Range 拉流→退出(member_left)→解散(4005+文件清理+404) |
+| `test_restart_wipes_everything` | 重启即清理:同配置重建应用,启动清理删全部文件与行,旧房间 404,名额释放(需求 4.5) |
+| `test_room_limit_enforced_then_updated` | 上限 2 拒第 3 房;"修改配置+重启"后新上限生效(验收 16/17) |
+| `test_member_limit_over_http_and_ws` | 在线口径满员:HTTP 可获凭证、WS 4002(决策 T13) |
+| `test_env_var_override` | MOVIE_TOGETHER__LIMITS__MAX_ROOMS 环境变量覆盖 |
+| `test_never_joined_room_expires` | 创建后从未上线→倒计时→清理→链接失效 |
+| `test_ws_auth_revives_empty_room` | 倒计时窗口内 WS auth 复活(决策 T14) |
+| `test_heartbeat_timeout_end_to_end` | 真实定时器全链路:判死→连接关闭→移除→空房→清理→404(需求 3.6.2) |
+| `test_cors_preflight` | 分离部署 CORS 预检(决策 T16) |
+
+**实现层小修补**:对照 api.md 2.1("创建者若从未连 WS,房间按空房倒计时过期")发现 `create_room` 未启动倒计时(从未上线的房间永不过期)——补 `room.empty_since = now`(首个 WS auth 复活,与决策 T14 语义一致),新增 P2 单测 `test_create_room_starts_empty_countdown` 锁定。
+
+**工程收尾**:conftest 增加 `connect_and_auth` 共享助手(test_ws.py 去重引用);uvicorn 真实启动冒烟(healthz 200 + 建房接口)通过后清理运行时残留。
+
+### 6.2 测试结果
+
+累计 **108 项全部通过**(三次连续回归 EXIT=0,总时长约 12s);P2 新增 1 项(创建即倒计时)、P4 新增 9 项。
+
+## 7. 对后续阶段的输入(P5 前端)
+
+- 后端接口契约以 doc/api.md 为准,消息结构已在 test_api/test_ws 中实测锁定;前端联调可直接复用集成测试中的调用序列(test_integration.py 的完整旅程即前端的用户路径);
+- 前端实现按 design.md 第 6 节(Vite + React + TS、zustand 四 store、WS 客户端指数退避重连)与 doc/sync-protocol.md §4(时钟估计、校准器参数表);
+- 开发环境:Vite proxy 将 `/api`、`/ws`、`/media` 转发至 127.0.0.1:8000(design.md 2.2),后端 CORS 默认 `*` 即可直连。

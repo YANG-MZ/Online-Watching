@@ -91,6 +91,17 @@ async def test_create_room_invalid_nickname(env) -> None:
             await m.create_room(bad, now=0.0)  # type: ignore[arg-type]
 
 
+async def test_create_room_starts_empty_countdown(env) -> None:
+    """创建即空房倒计时,首个 WS auth 复活(api.md 2.1,决策 T14)。"""
+    m, *_ = env
+    cred = await m.create_room("Alice", now=1000.0)
+    room = m.get_room(cred.room_id)
+    assert room.empty_since == 1000.0  # 未上线即倒计时
+
+    await m.authenticate(cred.room_id, cred.session_token, FakeConn(), now=1001.0)
+    assert room.empty_since is None  # 上线复活
+
+
 async def test_create_room_limit_rejected(env) -> None:
     """第 6 个房间被拒(默认上限 5,验收 16)。"""
     m, *_ = env

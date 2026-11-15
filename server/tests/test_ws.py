@@ -9,21 +9,7 @@ from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from server.app.ws import ConnectionRegistry, heartbeat_pass
-from server.tests.conftest import auth_headers
-
-
-def _connect_auth(stack, client: TestClient, room_id: str, token: str):
-    """建立 WS 并完成鉴权;返回 (会话, 快照)。
-
-    自己的 member_joined 广播(注册后全体广播)在此一并消费。
-    """
-    ws = stack.enter_context(client.websocket_connect(f"/ws/rooms/{room_id}"))
-    ws.send_json({"type": "auth", "token": token})
-    snap = ws.receive_json()
-    assert snap["type"] == "auth_ok"
-    join = ws.receive_json()
-    assert join["type"] == "member_joined"
-    return ws, snap
+from server.tests.conftest import auth_headers, connect_and_auth as _connect_auth
 
 
 def test_auth_ok_snapshot_structure(p3_env) -> None:

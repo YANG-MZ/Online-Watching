@@ -61,6 +61,21 @@ def p3_env(tmp_path):
     db.close()
 
 
+def connect_and_auth(stack, client, room_id: str, token: str):
+    """建立 WS 会话并完成鉴权,返回 (会话, 快照)。
+
+    会话以 stack.enter_context 管理(适配 starlette 1.10);
+    自己的 member_joined 广播(注册后全体广播)在此一并消费。
+    """
+    ws = stack.enter_context(client.websocket_connect(f"/ws/rooms/{room_id}"))
+    ws.send_json({"type": "auth", "token": token})
+    snap = ws.receive_json()
+    assert snap["type"] == "auth_ok"
+    join = ws.receive_json()
+    assert join["type"] == "member_joined"
+    return ws, snap
+
+
 def upload_headers(token: str, filename: str) -> dict:
     """视频上传请求头(X-Filename URL 编码,api.md 2.5)。"""
     from urllib.parse import quote

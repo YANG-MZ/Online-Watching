@@ -203,6 +203,9 @@ class RoomManager:
         room = Room(room_id=room_id, host_user_id=user_id, created_at=now)
         room.known_users[user_id] = KnownUser(user_id, nick, now)
         room.credentials[token] = user_id
+        # 创建即空房倒计时:创建者从未连 WS 时房间按配置过期(api.md 2.1);
+        # 首个 WS auth 复活(决策 T14)。
+        room.empty_since = now
         self._rooms[room_id] = room
 
         await self._room_repo.insert_room(room_id, user_id, now)
