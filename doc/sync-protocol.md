@@ -50,7 +50,7 @@
 | `seek(p)` | `position = max(0, p)`,**state 不变**,`updated_at=now` | 暂停态 seek 同样生效(需求 3.4.2);服务端不感知 duration,不设上界,客户端 clamp |
 | `rate(r)` | `position = target(now)`,`rate=r`,`updated_at=now` | 先按旧倍速结算再换新倍速;`r ∈ [0.25, 3.0]`,超范围回 error |
 
-**视频替换重置**(需求 D4):`state=paused, position=0, rate=1.0, version+1`,并广播 `video_changed`——`version` 延续递增(不归零),保证旧视频的迟到 `state_update` 仍能被 version 过滤。
+**视频替换重置**(需求 D4):`state=paused, position=0, rate=1.0, version+1`,并广播 `video_changed` 与一条重置后的 `state_update`(在线成员本地状态同步归位)——`version` 延续递增(不归零),保证旧视频的迟到 `state_update` 仍能被 version 过滤。
 
 **播放结束(ended)**:不产生任何服务端事件(需求 3.4.4)。`position` 可能随时间超过实际 duration,属预期;房主随后 `play` 或 `seek` 时正常结算。
 

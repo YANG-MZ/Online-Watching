@@ -461,9 +461,11 @@ class RoomManager:
         video: VideoMeta,
         file_path: Path,
         now: float,
-    ) -> RoomEvent:
+    ) -> list[RoomEvent]:
         """上传完成:替换场景删旧文件与旧行(需求 D4)→ 写新 DB 行 →
-        内存 video 更新 + 状态重置 → 返回 video_ready / video_changed 事件。"""
+        内存 video 更新 + 状态重置 → 返回 [video_ready/video_changed 事件,
+        state_update 事件](重置后的播放状态需广播给在线成员,否则其本地
+        playback 停留在旧版本继续校准)。"""
         room = self._get_room(room_id)
         self._require_host(room, session_token)  # 正常完成时防御复查
 
@@ -475,20 +477,34 @@ class RoomManager:
         await self._video_repo.insert_video(video, room.room_id, file_path, now)
         room.video = video
         room.uploading = False
-        self._playback.reset_for_new_video(room, now)
+        pb = self._playback.reset_for_new_video(room, now)
 
         event_type = "video_changed" if old is not None else "video_ready"
-        return RoomEvent(
-            room.room_id,
-            {
-                "type": event_type,
-                "video": {
-                    "video_id": video.video_id,
-                    "original_name": video.original_name,
-                    "size": video.size,
+        return [
+            RoomEvent(
+                room.room_id,
+                {
+                    "type": event_type,
+                    "video": {
+                        "video_id": video.video_id,
+                        "original_name": video.original_name,
+                        "size": video.size,
+                    },
                 },
-            },
-        )
+            ),
+            RoomEvent(
+                room.room_id,
+                {
+                    "type": "state_update",
+                    "state": pb.state,
+                    "position": pb.position,
+                    "rate": pb.rate,
+                    "updated_at": pb.updated_at,
+                    "version": pb.version,
+                    "server_ts": now,
+                },
+            ),
+        ]
 
     def fail_upload(self, room_id: str) -> None:
         """上传失败/中止:释放互斥锁(幂等,房间可能已销毁)。"""

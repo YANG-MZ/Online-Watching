@@ -234,8 +234,8 @@ ws://<后端>/ws/rooms/{room_id}
 | `member_left` | `{ "user_id": "...", "reason": "leave"/"timeout" }` | 主动退出 / 心跳超时 |
 | `host_changed` | `{ "host_user_id": "..." }` | 房主移交(需求 3.1.5) |
 | `state_update` | `{ "state","position","rate","updated_at","version","server_ts" }` | 任一控制操作生效后广播 |
-| `video_ready` | `{ "video": {...} }` | 首次上传完成 |
-| `video_changed` | `{ "video": {...} }` | 替换上传完成(播放器重新加载,验收 12) |
+| `video_ready` | `{ "video": {...} }` | 首次上传完成;伴随一条 `state_update` 广播(重置后的播放状态) |
+| `video_changed` | `{ "video": {...} }` | 替换上传完成(播放器重新加载,验收 12);伴随一条 `state_update` |
 | `room_dissolved` | `{ "reason": "host_dissolved" }` | 解散,随 connection 关闭 |
 | `kicked` | `{ "reason": "duplicate_connection" }` | 同 token 新连接接管(决策 T15) |
 | `error` | `{ "code": "...", "message": "..." }` | 消息级错误(如 FORBIDDEN) |

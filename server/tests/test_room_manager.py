@@ -355,9 +355,12 @@ async def test_upload_first_sets_video_and_resets_playback(env) -> None:
     room.playback.position = 500.0
     room.playback.version = 7
 
-    event = await _complete(m, host_cred.room_id, host_cred.session_token, "vid1", t=1001.0)
+    event, state_ev = await _complete(m, host_cred.room_id, host_cred.session_token, "vid1", t=1001.0)
 
     assert event.message["type"] == "video_ready"
+    # 视频变更伴随重置后的 state_update 广播(api.md 3.4)
+    assert state_ev.message["type"] == "state_update"
+    assert state_ev.message["version"] == 8 and state_ev.message["state"] == "paused"
     assert room.video.video_id == "vid1"
     assert room.uploading is False
     pb = room.playback
@@ -380,12 +383,13 @@ async def test_upload_replace_emits_changed_and_removes_old(env) -> None:
     m.begin_upload(host_cred.room_id, host_cred.session_token)
     await storage.write_upload("up2", _chunks(b"new!"))
     await storage.promote_upload("up2", "vid2")
-    event = await m.complete_upload(
+    event, state_ev = await m.complete_upload(
         host_cred.room_id, host_cred.session_token,
         video_meta("vid2", 4), Path("videos/vid2.mp4"), now=1002.0,
     )
 
     assert event.message["type"] == "video_changed"
+    assert state_ev.message["type"] == "state_update"
     room = m.get_room(host_cred.room_id)
     assert room.video.video_id == "vid2"
     assert storage.stat_size("vid1") is None   # 旧文件已删

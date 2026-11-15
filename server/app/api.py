@@ -235,7 +235,7 @@ def create_api_router(
             await storage.promote_upload(upload_id, video_id)
             # 步骤 8/9:替换删旧行旧文件、写新行、状态重置
             meta = VideoMeta(video_id=video_id, original_name=filename, size=size)
-            event = await room_manager.complete_upload(
+            events = await room_manager.complete_upload(
                 room_id, token, meta, Path("videos") / f"{video_id}.mp4", now=time.time()
             )
         except UploadSizeExceededError as e:
@@ -261,8 +261,8 @@ def create_api_router(
             room_manager.fail_upload(room_id)
             raise
 
-        # 步骤 10:广播 video_ready / video_changed
-        await apply_room_events(registry, [event])
+        # 步骤 10:广播 video_ready / video_changed + 重置后的 state_update
+        await apply_room_events(registry, events)
         return {"video_id": video_id, "original_name": filename, "size": size}
 
     return router

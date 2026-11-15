@@ -74,6 +74,7 @@ def test_full_journey(isettings, tmp_path) -> None:
         assert resp.status_code == 200
         video_id = resp.json()["video_id"]
         assert ws_host.receive_json()["type"] == "video_ready"
+        assert ws_host.receive_json()["type"] == "state_update"  # 重置后的播放状态
         assert _video_file(tmp_path, video_id).is_file()
 
         # 4. 成员上线 → 快照携带视频;房主收到 Bob 加入

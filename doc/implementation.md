@@ -29,7 +29,7 @@
 | **P2** | **room_manager 领域服务:生命周期 / 成员 / 移交 / 快照 / 复活** | ✅ **完成(2026-11-15,见 §4)** |
 | **P3** | **适配层:api(HTTP 端点)/ ws(WS 端点与广播)/ cleanup(清理任务)+ main 装配** | ✅ **完成(2026-11-15,见 §5)** |
 | **P4** | **装配与集成:build_app + lifespan 集成测试(重启即清理/配置生效/端到端)** | ✅ **完成(2026-11-15,见 §6)** |
-| P5 | 前端 web/:Vue 3 + Vite + TS(同步引擎按 sync-protocol §4;2026-11-15 用户决策由 React 变更为 Vue 3,见 requirements 附录 B N2 / design T17) | 待开始 |
+| **P5** | **前端 web/:Vue 3 + Vite + TS(Pinia/vue-router,同步引擎按 sync-protocol §4;2026-11-15 用户决策由 React 变更为 Vue 3)** | ✅ **完成(2026-11-15,见 §7)** |
 
 ---
 
@@ -184,7 +184,40 @@ main.build_app 在 P3 已完成全链路装配,本阶段为**真实 lifespan 下
 
 累计 **108 项全部通过**(三次连续回归 EXIT=0,总时长约 12s);P2 新增 1 项(创建即倒计时)、P4 新增 9 项。
 
-## 7. 对后续阶段的输入(P5 前端)
+## 7. P5:前端实现(2026-11-15)
+
+### 7.1 实现范围(web/,Vue 3 + Vite + TypeScript + Pinia + vue-router)
+
+| 模块 | 内容 |
+| --- | --- |
+| `api/http.ts` | HTTP 客户端:错误统一 ApiError{status,code,message};上传走 XHR(onprogress 进度,design T8);inviteUrl 相对路径补全 |
+| `api/ws.ts` | RoomSocket:首条 auth(10s 超时)、30s 心跳 ping、指数退避重连(1s→30s 上限,`reconnectDelayMs` 纯函数)、close code 终态表(4001~4005 不重连)、pong 样本喂 ClockEstimator、终态/错误通知回调 |
+| `sync/clock.ts` | 时钟偏差估计:最近 8 样本、rtt 最小 3 个取 offset 中位数(sync-protocol §3) |
+| `sync/engine.ts` | 同步引擎:version 过滤、快照整体覆盖、周期校准(死区 0.3s/渐进 ±5%/硬 seek>2s,§4.2 参数表)、autoplay 拦截(浮层 + 手势恢复 + 每 5s 周期检测)、ended 边界(校准暂停;再次播放从头,§5)、target 越尾 clamp |
+| `stores/`(4 个 Pinia) | session(凭证,persist)/ room(快照驱动+version 过滤+成员事件)/ preference(音量/静音,persist,需求 3.5)/ upload(进度) |
+| 视图组件 | Home(创建/加入/错误文案/邀请链接粘帖解析)、Room(播放器+控制条[房主可操作/成员只读]+拖动松手 seek+倍速档位+音量/静音+成员列表+上传面板+连接徽标+终态浮层+解散二次确认)、VideoPlayer/MemberList/UploadPanel/ConnectionBadge |
+
+**跨阶段契约修正**(P5 实现中暴露,回补 P2/P3):上传完成仅广播 `video_ready/video_changed` 不含重置后的播放状态 → 在线成员本地 playback 停留在旧版本继续校准。修正:`RoomManager.complete_upload` 返回 `[video 事件, state_update 事件]`,api 层一并广播(api.md 3.4/sync-protocol §2 已同步);相关测试与集成旅程断言更新。
+
+### 7.2 验证结果
+
+- **Vitest 29 项全部通过**:clock(样本上限/中位数口径)、engine(version 过滤/三档校准/ended/autoplay)、stores(preference 持久化/session/room 事件应用)、backoff;
+- **vue-tsc 类型检查 + vite build 成功**(产物 JS 123KB/gzip 47KB);
+- **后端 108 项回归全绿**(契约修正后);
+- **浏览器联调冒烟(control-browser)通过**:创建房间(空昵称禁用按钮 ✓)→ 房主上线(在线徽标/房主 UI/成员列表)→ 成员按房间 ID 加入(两人列表+广播同步)→ 上传广播 → 播放器加载+播放状态"播放中"→ autoplay 拦截浮层(需求 7.3)→ 成员端控制只读 → 音量偏好独立(80%)→ **服务重启场景**(close 4003 终态浮层,停止重连,需求 4.5 客户端表现)→ 退出回首页。
+
+### 7.3 实现决策与过程记录
+
+- **pinia v3 插件行为**:未经 `app.use(pinia)` 安装时 `pinia.use()` 的插件只入暂存队列不执行——测试装置以空应用完成安装激活(真实应用不受影响);persist 写入经 `$subscribe` 异步触发,测试需 `await nextTick()`;
+- **前端 bug 修复**:session.clear() 保留昵称(退出/终态后重新加入不必重输);
+- **联调环境限制(非应用缺陷)**:IAB 两标签页共享同源 localStorage,后加入者的持久化会话覆盖前者(真实多设备/浏览器天然隔离);file chooser 自动化不受支持,上传以页面内 fetch/后端模拟客户端代劳,广播链路验证完整;
+- 上传/播放用伪 mp4(512B~4KB)验证:后端仅校验扩展名(需求 7.1 已知限制),duration 未知时 clamp 跳过、autoplay 被拒进入浮层——与真实视频行为一致性由单测覆盖。
+
+## 8. 对后续阶段(部署验收)的输入
+
+- 全栈可用:开发环境 `uv run uvicorn server.app.main:app --port 8000` + `cd web && npm run dev`(Vite proxy);分离部署按 design.md 8.2(构建注入 `VITE_API_BASE_URL` + 静态托管);
+- 需求 8.1/8.2 验收清单中,自动化已覆盖大部分;局域网实测(性能验收 8.2:操作 ≤1s/偏差 ≤0.5s)与多设备真实浏览器旅程为剩余手动验收项;
+- 后续增强候选:真实视频端到端(带 H.264 编码的样例文件)、手机端适配(P6 规划见 requirements 6.3)。
 
 - 后端接口契约以 doc/api.md 为准,消息结构已在 test_api/test_ws 中实测锁定;前端联调可直接复用集成测试中的调用序列(test_integration.py 的完整旅程即前端的用户路径);
 - 前端实现按 design.md 第 6 节(Vue 3 + Vite + TS、**Pinia 四 store**、vue-router、WS 客户端指数退避重连)与 doc/sync-protocol.md §4(时钟估计、校准器参数表);框架为用户决策变更为 Vue 3(2026-11-15,requirements N2 / design T17);
