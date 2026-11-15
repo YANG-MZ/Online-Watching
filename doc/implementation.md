@@ -27,7 +27,7 @@
 | P0 | 工程骨架:目录结构 / models 数据结构 / 抽象接口 / config / logger | ✅ 完成(2026-11-14) |
 | **P1** | **最底层业务:playback 结算服务 + SQLite 仓储 + LocalVideoStorage** | ✅ **完成(2026-11-14,见 §3)** |
 | **P2** | **room_manager 领域服务:生命周期 / 成员 / 移交 / 快照 / 复活** | ✅ **完成(2026-11-15,见 §4)** |
-| P3 | 适配层:api(HTTP 端点)/ ws(WS 端点与广播)/ cleanup(清理任务) | 待开始 |
+| **P3** | **适配层:api(HTTP 端点)/ ws(WS 端点与广播)/ cleanup(清理任务)+ main 装配** | ✅ **完成(2026-11-15,见 §5)** |
 | P4 | 装配与集成:main 工厂接线(_make_* 槽位)+ TestClient 集成测试 | 待开始 |
 | P5 | 前端 web/:Vite + React + TS(同步引擎按 sync-protocol §4) | 待开始 |
 
@@ -129,8 +129,37 @@
 - **实现侧真 bug 1 处**:`_destroy_room` 对同步方法 `stat_size` 误用 `await`(测试暴露),已修复;
 - 修复后 63 项全部通过(38 P0/P1 回归 + 25 P2)。
 
-## 5. 对后续阶段的输入(P3 依赖)
+## 5. P3:适配层与装配(2026-11-15)
 
-- **api 层**:`RoomError.code` → HTTP 状态码映射(400/401/403/404/409/413/429);上传流程组装:预检(扩展名/Content-Length)→ `begin_upload` → `write_upload(abort_check=manager.upload_abort_check(...))` → `promote_upload` → `complete_upload`,任一失败 `fail_upload` + 删临时文件;
-- **ws 层**:`authenticate` 返回 `AuthResult`(先消费 kick 事件单发 + close 4004,再回 auth_ok 快照,再广播 member_joined);控制消息用 `resolve_member` 鉴权 + `manager.is_host`;心跳扫描协程周期调 `sweep_timeouts` 并按 member_left 事件关闭死连接;快照 `server_ts` 由 ws 层补齐;
-- **cleanup 层**:周期任务 = `manager.purge_expired_rooms` + `storage.sweep_tmp`;启动清理 = DB 全删(`delete_all_*`)+ 逐文件删除。
+### 5.1 实现范围
+
+- **ws.py**:`ConnectionRegistry`(注册/移除防误删/单发/广播/房间级关闭)、`apply_room_events` 消费领域事件(kick 单发 + close 4004)、WS 端点(auth 10s 超时 → 鉴权错误先回 error 消息再按 api.md 3.5 close → auth_ok 快照 → 广播 member_joined → 消息循环 ping/pong 与 play/pause/seek/rate 仅房主)、`heartbeat_pass` 单轮扫描(独立函数便于测试直驱)+ `heartbeat_scan` 周期协程;
+- **api.py**:全部 7 个 HTTP 端点;上传按 design.md 4.7 十步组装(409 互斥暂存延后抛出以保持"房主→扩展名→大小→互斥"校验顺序);`_parse_range` 单段 Range(闭区间/开区间/后缀式,end 越界钳制);错误统一 `{code, message}`(RoomError 映射表 + ApiError);
+- **cleanup.py**:启动清理(DB 行全部视为残留,先删文件再删行)+ 周期扫描(空房过期/临时文件超龄/孤儿文件兜底)+ start/stop 生命周期;
+- **main.py**:依赖图装配 + lifespan(启动清理、周期清理任务、心跳扫描)+ CORS;`app = build_app()` 供 uvicorn 引用。
+
+### 5.2 实现决策与接口变更
+
+- **VideoStorage 新增 `list_video_ids()`**(P3 清理任务孤儿核对所需,最小接口扩展);
+- **共享注册表注入**:`create_ws_router` 接受外部 `ConnectionRegistry`,装配层必须传入与 api 层相同实例——否则 HTTP 触发的 leave/dissolve/上传广播无法到达 WS 连接(见 5.3 真 bug);`create_api_router` 不再需要仓储参数,`create_media_router` 仅需 storage;
+- **广播静默失败改为记录 warning 日志**(loguru),便于排查连接级异常;
+- **心跳扫描拆分 `heartbeat_pass`**:单轮逻辑独立为模块级异步函数,周期协程仅负责 sleep 循环,测试可直接驱动单轮;
+- 测试装置(conftest.py)组装真实组件 + 临时目录,应用不带 lifespan(周期任务不启动,保持确定性);lifespan 装配由 P4 集成测试覆盖。
+
+### 5.3 测试结果与过程记录
+
+**新增 35 项**(test_api 16 / test_ws 12 / test_cleanup 4 / heartbeat_pass 等),累计 **98 项全部通过,两次连续回归 REAL_EXIT=0**。
+
+覆盖:HTTP 端点成功/错误码映射(400/401/403/404/409/413/429)、上传成功/替换/广播、Range 三态与 416、leave/dissolve 的 WS 关闭行为(1000/4005)、WS 鉴权与 close code(4001/4002/4003/4004)、控制消息广播与越权、非法消息、心跳扫描广播、清理任务三职责与生命周期。
+
+**过程记录(如实)**:
+
+1. **实现侧真 bug 1 处(挂起级)**:`create_ws_router` 内部自建 `ConnectionRegistry`,与 api 层注入实例不一致 → leave/dissolve/上传广播永远无法到达 WS 连接,相关用例无限挂起。经 faulthandler 抓栈 + 日志插桩定位,改为装配层注入共享实例(§5.2),此为跨适配层依赖关系错误;
+2. 测试侧错误若干:starlette 1.10 的 `websocket_connect` 必须以 `with`/`enter_context` 使用(新版 Session 在 `__enter__` 才启动 portal);断言顺序错误——`member_joined` 广播在成员 WS auth 后才发出,`video_ready` 广播不补发(先于上线完成的上传,上线者从快照得知视频);若干 `t=`/`now=` 参数名笔误与字节数不一致;
+3. 调试手段沉淀:pytest 挂起用 `faulthandler.dump_traceback_later(…, file=…)` 写文件抓主线程栈(转储会被 pytest capture 吞掉,必须显式指定文件);管道尾 `echo $?` 会掩盖真实退出码,需以文件重定向取 timeout 真实退出码。
+
+## 6. 对后续阶段的输入(P4 依赖)
+
+- main.build_app 已完成全链路装配(lifespan 启动清理 + 周期清理 + 心跳扫描),P4 重点为**集成测试**:带 lifespan 的 TestClient 验证"重启即清理"(需求 4.5)、配置覆盖(验收 17)、多房间并发上限(验收 16)等跨层场景;
+- P3 测试装置(conftest.py 的 p3_env)不带 lifespan,可复用为集成测试底座并按需开启 lifespan;
+- 前端 P5 按 design.md 第 6 节与 doc/sync-protocol.md §4 实现,后端接口契约以 doc/api.md 为准,服务端消息结构已在 test_api/test_ws 中实测锁定。

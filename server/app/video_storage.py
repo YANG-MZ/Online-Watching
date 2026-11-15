@@ -83,6 +83,11 @@ class VideoStorage(ABC):
         """删除正式文件(替换/清理,幂等:文件不存在视为成功)。"""
 
     @abstractmethod
+    def list_video_ids(self) -> list[str]:
+        """列出正式视频文件 ID(videos/*.mp4 文件名主干),孤儿文件核对用
+        (design.md 4.9 第 3 条,P3 清理任务需要)。"""
+
+    @abstractmethod
     async def sweep_tmp(self, max_age_seconds: float) -> int:
         """删除超龄临时文件,返回删除数(design.md 4.9 第 2 条)。"""
 
@@ -199,6 +204,12 @@ class LocalVideoStorage(VideoStorage):
 
     async def delete(self, video_id: str) -> None:
         await asyncio.to_thread(self._unlink_quiet, self.video_path(video_id))
+
+    def list_video_ids(self) -> list[str]:
+        """列出正式视频文件 ID(videos/*.mp4 文件名主干),孤儿核对用。"""
+        if not self._videos_dir.is_dir():
+            return []
+        return [p.stem for p in self._videos_dir.glob("*.mp4") if p.is_file()]
 
     async def sweep_tmp(self, max_age_seconds: float) -> int:
         def _sweep() -> int:
