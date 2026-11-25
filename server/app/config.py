@@ -31,12 +31,16 @@ class ServerSettings(BaseModel):
 
 
 class FrontendSettings(BaseModel):
-    """前端站点地址,用于拼接邀请链接(design.md 4.10)。
+    """前端站点地址与单 URL 部署(design.md T18)。
 
-    为空时邀请链接返回相对路径 /rooms/{room_id},由前端自行补全。
+    - base_url:用于拼接邀请链接;为空时返回相对路径由前端补全;
+    - serve_dist:开启后由后端托管前端构建产物(单进程单端口,同源无
+      CORS);dist_dir 为构建产物目录(相对工作目录)。
     """
 
     base_url: str = ""
+    serve_dist: bool = False
+    dist_dir: str = "web/dist"
 
 
 class CorsSettings(BaseModel):

@@ -7,14 +7,24 @@
       </p>
       <h2>昵称</h2>
       <input v-model="nickname" type="text" maxlength="32" placeholder="输入昵称(1~32 字符)" />
+
       <h2>创建房间</h2>
-      <button :disabled="busy || nickname.trim() === ''" @click="onCreate">创建房间</button>
-      <p class="muted-text">创建后获得邀请链接,分享给其他人加入。</p>
+      <div class="controls">
+        <input
+          v-model="createPassword"
+          type="text"
+          maxlength="64"
+          placeholder="房间密码(可选,设置后加入需输入)"
+        />
+        <button :disabled="busy || nickname.trim() === ''" @click="onCreate">创建房间</button>
+      </div>
+      <p class="muted-text">创建后获得邀请链接,分享给其他人加入;若设置了密码,请一并告知。</p>
 
       <h2>加入房间</h2>
       <div class="controls">
         <input v-model="roomIdInput" type="text" placeholder="房间 ID 或邀请链接中的房间 ID" />
-        <button :disabled="busy || roomIdInput.trim() === ''" @click="onJoin">加入</button>
+        <input v-model="joinPassword" type="text" maxlength="64" placeholder="房间密码(无密码房间留空)" />
+        <button :disabled="busy || roomIdInput.trim() === '' || nickname.trim() === ''" @click="onJoin">加入</button>
       </div>
       <p v-if="errorMsg" class="error-text">{{ errorMsg }}</p>
       <p v-if="session.roomId" class="muted-text">
@@ -35,7 +45,9 @@ const route = useRoute()
 const session = useSessionStore()
 
 const nickname = ref(session.nickname)
+const createPassword = ref('')
 const roomIdInput = ref(String(route.query.room ?? ''))
+const joinPassword = ref('')
 const busy = ref(false)
 const errorMsg = ref('')
 
@@ -54,7 +66,7 @@ async function onCreate(): Promise<void> {
   busy.value = true
   errorMsg.value = ''
   try {
-    const cred = await http.createRoom(nickname.value.trim())
+    const cred = await http.createRoom(nickname.value.trim(), createPassword.value.trim())
     session.setSession(cred.room_id, cred.user_id, cred.session_token, nickname.value.trim(), cred.is_host)
     await router.push(`/rooms/${cred.room_id}`)
   } catch (e) {
@@ -69,7 +81,7 @@ async function onJoin(): Promise<void> {
   busy.value = true
   errorMsg.value = ''
   try {
-    const cred = await http.joinRoom(roomId, nickname.value.trim())
+    const cred = await http.joinRoom(roomId, nickname.value.trim(), joinPassword.value.trim())
     session.setSession(roomId, cred.user_id, cred.session_token, nickname.value.trim(), cred.is_host)
     await router.push(`/rooms/${roomId}`)
   } catch (e) {

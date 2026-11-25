@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import secrets
 import uuid
 
@@ -16,6 +17,7 @@ ROOM_ID_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
 ROOM_ID_LENGTH = 8
 USER_ID_BYTES = 8  # 16 个十六进制字符
 SESSION_TOKEN_BYTES = 32  # token_urlsafe(32) → 43 字符
+PASSWORD_MAX_LEN = 64  # 房间密码长度上限(P5 后新增,需求 N3)
 
 
 def generate_room_id() -> str:
@@ -41,3 +43,13 @@ def generate_video_id() -> str:
 def generate_upload_id() -> str:
     """生成上传会话 ID,用于 data/tmp/{upload_id}.part 临时文件。"""
     return uuid.uuid4().hex
+
+
+def hash_password(password: str | None) -> str | None:
+    """房间密码 SHA-256 哈希(N3);空/None 视为无密码,返回 None。
+
+    SHA-256 足够:无用户体系、低价值目标、密码非长随机数场景。
+    """
+    if not password:
+        return None
+    return hashlib.sha256(password.encode("utf-8")).hexdigest()

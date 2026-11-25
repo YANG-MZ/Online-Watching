@@ -25,6 +25,7 @@ from server.app.config import (
     RoomSettings,
     Settings,
     StorageSettings,
+    FrontendSettings,
     load_settings,
 )
 from server.app.main import build_app
@@ -277,3 +278,79 @@ def test_cors_preflight(isettings) -> None:
             },
         )
         assert resp.headers.get("access-control-allow-origin") == "*"
+
+
+# ---------- 单 URL 部署:后端托管前端(design T18) ----------
+
+def test_spa_fallback_and_api_precedence(isettings, tmp_path) -> None:
+    """serve_dist 开启:页面/深链接回退 index.html;API 路径优先且不吞 404。"""
+    from server.app.main import build_app
+
+    # 造一份最小 dist 产物
+    dist = tmp_path / "dist"
+    (dist / "assets").mkdir(parents=True)
+    (dist / "index.html").write_text("<html>SPA</html>", encoding="utf-8")
+    (dist / "assets" / "app.js").write_text("console.log(1)", encoding="utf-8")
+    (dist / "favicon.ico").write_bytes(b"ico")
+
+    settings = isettings.model_copy(
+        update={"frontend": FrontendSettings(base_url="", serve_dist=True, dist_dir=str(dist))}
+    )
+    app = build_app(settings)
+    with TestClient(app) as client:
+        assert client.get("/").text == "<html>SPA</html>"                     # 根
+        assert client.get("/rooms/7QXK4M9R").text == "<html>SPA</html>"       # SPA 深链接
+        assert client.get("/assets/app.js").text == "console.log(1)"          # 静态资源
+        assert client.get("/favicon.ico").content == b"ico"                   # 根级文件
+        # API 前缀不被页面吞:未匹配的 api 路径返回 JSON 404
+        miss = client.get("/api/no-such-path")
+        assert miss.status_code == 404 and miss.json()["code"] == "NOT_FOUND"
+        # API 正常工作(托管不影响接口)
+        assert client.get("/healthz").json() == {"status": "ok"}
+
+
+def test_spa_dist_missing_falls_back_to_api_only(isettings) -> None:
+    """serve_dist 开启但产物缺失:跳过托管,行为等同纯 API 服务。"""
+    from server.app.main import build_app
+
+    settings = isettings.model_copy(
+        update={
+            "frontend": FrontendSettings(
+                base_url="", serve_dist=True, dist_dir=str(isettings.storage.data_dir + "/no-dist")
+            )
+        }
+    )
+    app = build_app(settings)
+    with TestClient(app) as client:
+        assert client.get("/healthz").json() == {"status": "ok"}
+
+
+def test_join_with_password_over_http(isettings) -> None:
+    """HTTP join 密码三态(验收:密码错误/缺失被明确拒绝)。"""
+    app = build_app(isettings)
+    with TestClient(app) as client:
+        host = client.post(
+            "/api/rooms", json={"nickname": "Alice", "password": "pw123"}
+        ).json()
+        # 未带密码
+        r1 = client.post(f"/api/rooms/{host['room_id']}/join", json={"nickname": "Bob"})
+        assert r1.status_code == 400 and r1.json()["code"] == "PASSWORD_REQUIRED"
+        # 错误密码
+        r2 = client.post(
+            f"/api/rooms/{host['room_id']}/join",
+            json={"nickname": "Bob", "password": "bad"},
+        )
+        assert r2.status_code == 401 and r2.json()["code"] == "PASSWORD_INCORRECT"
+        # 正确密码
+        r3 = client.post(
+            f"/api/rooms/{host['room_id']}/join",
+            json={"nickname": "Bob", "password": "pw123"},
+        )
+        assert r3.status_code == 200 and r3.json()["session_token"]
+
+
+def test_password_too_long_over_http(isettings) -> None:
+    app = build_app(isettings)
+    with TestClient(app) as client:
+        r = client.post("/api/rooms", json={"nickname": "Alice", "password": "x" * 65})
+        assert r.status_code == 400 and r.json()["code"] == "INVALID_PASSWORD"

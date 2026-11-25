@@ -2,9 +2,9 @@
 
 | 项目名称 | movie-togher |
 | --- | --- |
-| 文档版本 | A1.0 |
-| 更新日期 | 2026-11-14 |
-| 需求依据 | doc/requirements.md(V1.2) |
+| 文档版本 | A1.1 |
+| 更新日期 | 2026-11-15 |
+| 需求依据 | doc/requirements.md(V1.3) |
 | 配套文档 | doc/design.md(总体方案)、doc/sync-protocol.md(同步协议) |
 
 ---
@@ -45,7 +45,7 @@
 
 ```
 POST /api/rooms
-{ "nickname": "Alice" }
+{ "nickname": "Alice", "password": "可选,房间密码(≤64 字符)" }
 ```
 
 **成功 200**:
@@ -60,7 +60,7 @@ POST /api/rooms
 }
 ```
 
-**失败**:`429 {code:"ROOM_LIMIT_REACHED"}`(当前房间数已达上限);`400 {code:"INVALID_NICKNAME"}`(昵称为空或超长,1~32 字符)。
+**失败**:`429 {code:"ROOM_LIMIT_REACHED"}`(当前房间数已达上限);`400 {code:"INVALID_NICKNAME"}`(昵称为空或超长,1~32 字符);`400 {code:"INVALID_PASSWORD"}`(密码超 64 字符,N3)。
 
 说明:创建即写 SQLite `rooms` 行;**不占用在线名额**(进入房间以 WS auth 为准,见 3.2);创建者若从未连 WS,房间按空房倒计时过期。
 
@@ -68,7 +68,7 @@ POST /api/rooms
 
 ```
 POST /api/rooms/{room_id}/join
-{ "nickname": "Bob" }
+{ "nickname": "Bob", "password": "房间设置了密码时必填(N3)" }
 ```
 
 **成功 200**:
@@ -82,7 +82,7 @@ POST /api/rooms/{room_id}/join
 }
 ```
 
-**失败**:`404 ROOM_NOT_FOUND`;`400 INVALID_NICKNAME`。
+**失败**:`404 ROOM_NOT_FOUND`;`400 INVALID_NICKNAME`;`400 PASSWORD_REQUIRED`(房间有密码但未携带)/`401 PASSWORD_INCORRECT`(密码错误,N3)。密码校验通过即签发凭证,断线重连沿用凭证、无需重复输入密码。
 
 说明:满员(在线人数 ≥ 上限)不在此接口拒绝,而在 WS auth 时以 close 4002 拒绝(在线名额以 WS 连接为准,design.md 4.4);HTTP 层无法准确判定瞬时在线数,统一口径避免"HTTP 说能进、WS 进不去"以外的歧义——前端收到 4002 时展示"房间已满"。
 
@@ -270,6 +270,9 @@ ws://<后端>/ws/rooms/{room_id}
 | INVALID_FORMAT | 400 | 仅支持 .mp4 文件 |
 | FILE_TOO_LARGE | 413 | 文件超过大小上限(4 GB) |
 | UPLOAD_IN_PROGRESS | 409 | 已有上传正在进行,请稍候 |
+| PASSWORD_REQUIRED | 400 | 该房间设置了密码,请输入房间密码(N3) |
+| PASSWORD_INCORRECT | 401 | 房间密码错误(N3) |
+| INVALID_PASSWORD | 400 | 房间密码不能超过 64 个字符(N3) |
 | SEEK_OUT_OF_RANGE | error 消息 | 跳转位置非法 |
 | RATE_OUT_OF_RANGE | error 消息 | 倍速超出允许范围 |
 | ROOM_DISSOLVED | WS 4005 | 房间已解散 |

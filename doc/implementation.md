@@ -213,11 +213,30 @@ main.build_app 在 P3 已完成全链路装配,本阶段为**真实 lifespan 下
 - **联调环境限制(非应用缺陷)**:IAB 两标签页共享同源 localStorage,后加入者的持久化会话覆盖前者(真实多设备/浏览器天然隔离);file chooser 自动化不受支持,上传以页面内 fetch/后端模拟客户端代劳,广播链路验证完整;
 - 上传/播放用伪 mp4(512B~4KB)验证:后端仅校验扩展名(需求 7.1 已知限制),duration 未知时 clamp 跳过、autoplay 被拒进入浮层——与真实视频行为一致性由单测覆盖。
 
-## 8. 对后续阶段(部署验收)的输入
+## 8. P6:单 URL 部署与房间密码(2026-11-15)
+
+### 8.1 实现范围(N3/N4,用户决策:方案 A 后端托管 + Cloudflare Tunnel + 房间密码)
+
+- **单 URL 部署(T18)**:`[frontend].serve_dist` 开关(默认关闭)→ `main._mount_spa` 托管 web/dist:/assets 走 StaticFiles、其余 GET 命中真实文件否则回退 index.html(SPA 深链接)、路径穿越防护(resolve 后必须在 dist 内)、api/media/ws/healthz 前缀始终 JSON 404 不被页面吞;**API 路由先于 catch-all 注册保证优先级**;产物缺失时自动跳过托管(等同纯 API 服务);
+- **房间密码(N3)**:`security.hash_password`(SHA-256,空=无密码);`Room.password_hash` + rooms 表列(schema v2,版本不符自动 DROP 重建——重启即清空语义下的迁移);`create_room(password)` / `join_room(password)` 校验:PASSWORD_REQUIRED(400)/PASSWORD_INCORRECT(401)/INVALID_PASSWORD(400);**密码门槛在 HTTP join,token 即已验证门票,WS 重连沿用**;错误码并入 ERROR_STATUS_MAP;
+- **前端**:Home 创建/加入表单支持密码(可选输入框);http.ts 传参;错误文案直接展示后端 message。
+
+### 8.2 验证结果
+
+后端 **117 项全绿**(新增 9:schema v2 迁移/密码哈希持久化/密码三态/无密码兼容/超长拒绝/HTTP 密码三态/SPA 回退与 API 优先级/产物缺失兜底);前端 Vitest 29 项全绿 + build 成功。
+
+### 8.3 实现决策与过程记录
+
+- schema 迁移策略:版本不符直接 DROP 重建两表(依赖"重启即清空"语义,无增量迁移负担);
+- spa_fallback 返回类型注解需 `response_model=None`(FastAPI 对 Response 联合类型不生成模型);
+- 房主/成员凭证内存态不受 localStorage 共享影响(联调环境限制已知项);
+- 部署指引(README 四/五节)同步重写为单端口模式 + Cloudflare Tunnel(快速隧道随机 URL/命名隧道固定 URL 需域名)。
+
+## 9. 对后续阶段(部署验收)的输入
 
 - 全栈可用:开发环境 `uv run uvicorn server.app.main:app --port 8000` + `cd web && npm run dev`(Vite proxy);分离部署按 design.md 8.2(构建注入 `VITE_API_BASE_URL` + 静态托管);
 - 需求 8.1/8.2 验收清单中,自动化已覆盖大部分;局域网实测(性能验收 8.2:操作 ≤1s/偏差 ≤0.5s)与多设备真实浏览器旅程为剩余手动验收项;
-- 后续增强候选:真实视频端到端(带 H.264 编码的样例文件)、手机端适配(P6 规划见 requirements 6.3)。
+- 后续增强候选:真实视频端到端(带 H.264 编码的样例文件)、手机端适配(requirements 6.3)。
 
 - 后端接口契约以 doc/api.md 为准,消息结构已在 test_api/test_ws 中实测锁定;前端联调可直接复用集成测试中的调用序列(test_integration.py 的完整旅程即前端的用户路径);
 - 前端实现按 design.md 第 6 节(Vue 3 + Vite + TS、**Pinia 四 store**、vue-router、WS 客户端指数退避重连)与 doc/sync-protocol.md §4(时钟估计、校准器参数表);框架为用户决策变更为 Vue 3(2026-11-15,requirements N2 / design T17);

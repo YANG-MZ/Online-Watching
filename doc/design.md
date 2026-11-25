@@ -2,9 +2,9 @@
 
 | 项目名称 | movie-togher |
 | --- | --- |
-| 文档版本 | T1.1 |
+| 文档版本 | T1.2 |
 | 更新日期 | 2026-11-15 |
-| 需求依据 | doc/requirements.md(V1.2,唯一需求依据) |
+| 需求依据 | doc/requirements.md(V1.3,唯一需求依据) |
 | 配套文档 | doc/api.md(接口与 WS 协议)、doc/sync-protocol.md(播放同步协议) |
 | 阶段 | 技术方案设计,不含业务代码 |
 
@@ -388,6 +388,11 @@ CREATE INDEX IF NOT EXISTS idx_videos_room ON videos(room_id);
 host = "0.0.0.0"          # 监听地址(局域网访问需 0.0.0.0)
 port = 8000
 
+[frontend]
+base_url = ""             # 前端地址,拼接邀请链接;空 = 相对路径由前端补全
+serve_dist = false        # 单 URL 部署(T18):true = 后端托管前端产物,单进程单端口
+dist_dir = "web/dist"     # 前端构建产物目录
+
 [cors]
 allowed_origins = ["*"]   # 前端 origin 列表;分离部署下按实际前端地址收紧,如 ["http://192.168.1.10:8001"]
 
@@ -487,6 +492,8 @@ npx serve dist -l 8001        # 轻量方案
 | T15 | 同 token 第二条 WS | **新连接踢旧连接**(kicked/duplicate_connection),身份单活,joined_at 沿用 |
 | T16 | 前端部署形态 | **前后端分离部署**(后端 CORS + 前端构建注入后端地址) |
 | T17 | 前端框架变更(2026-11-15) | **Vue 3 + Vite + TypeScript**(用户决策,替代 T5 原推荐 React);T6 状态管理随之改为 Pinia、T7 路由改为 vue-router;后端与协议不变 |
+| T18 | 单 URL 部署(2026-11-15,N4) | **后端托管前端构建产物**(`[frontend].serve_dist` 开关,默认关闭):单进程单端口对外,同源无 CORS;SPA 回退(深链接返 index.html)、路径穿越防护、api/media/ws 前缀不被页面吞;分离部署形态保留可切换 |
+| T19 | 房间密码(2026-11-15,N3) | 创建时可选设置(≤64 字符),**SHA-256 哈希存储**(rooms 表 + 内存 Room);密码校验仅在 **HTTP join**(通过即签发 token,token 为已验证门票,WS 重连沿用);错误码 PASSWORD_REQUIRED/PASSWORD_INCORRECT/INVALID_PASSWORD;WS auth 不重复校验密码 |
 
 其余技术选型(第 3 节 T1~T12)为推荐方案,实现阶段如需替换不影响已确认业务规则。
 

@@ -54,21 +54,21 @@ function authHeaders(token: string): Record<string, string> {
 }
 
 export const http = {
-  /** 创建房间(api.md 2.1);invite_url 为相对路径时由前端补全。 */
-  createRoom(nickname: string): Promise<Credentials> {
+  /** 创建房间(api.md 2.1);invite_url 为相对路径时由前端补全。password 可选(N3)。 */
+  createRoom(nickname: string, password = ''): Promise<Credentials> {
     return request('/api/rooms', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ nickname }),
+      body: JSON.stringify({ nickname, password }),
     })
   },
 
-  /** 加入房间(api.md 2.2);满员在 WS auth 时以 4002 拒绝。 */
-  joinRoom(roomId: string, nickname: string): Promise<Credentials> {
+  /** 加入房间(api.md 2.2);满员在 WS auth 时以 4002 拒绝。password 可选(N3)。 */
+  joinRoom(roomId: string, nickname: string, password = ''): Promise<Credentials> {
     return request(`/api/rooms/${encodeURIComponent(roomId)}/join`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ nickname }),
+      body: JSON.stringify({ nickname, password }),
     })
   },
 

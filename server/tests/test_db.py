@@ -140,3 +140,43 @@ async def test_video_replace_same_id(
     rows = await video_repo.list_by_room("ROOM01")
     assert len(rows) == 1
     assert rows[0][0].original_name == "new.mp4"
+
+
+# ---------- schema v2 迁移与密码哈希列(N3) ----------
+
+def test_schema_migration_from_v1(tmp_path) -> None:
+    """旧 v1 库:打开后重建为 v2(rooms 带密码列),数据按残留清空。"""
+    db_path = tmp_path / "data" / "app.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    raw = sqlite3.connect(str(db_path))
+    raw.executescript(
+        "CREATE TABLE rooms (room_id TEXT PRIMARY KEY, created_at REAL, host_user_id TEXT);"
+        "CREATE TABLE videos (video_id TEXT PRIMARY KEY);"
+        "INSERT INTO rooms VALUES ('old', 1.0, 'u1');"
+    )
+    raw.execute("PRAGMA user_version = 1")
+    raw.commit()
+    raw.close()
+
+    db = SqliteDatabase(db_path)
+    try:
+        assert db.conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+        cols = {r[1] for r in db.conn.execute("PRAGMA table_info(rooms)")}
+        assert "password_hash" in cols
+        assert db.conn.execute("SELECT COUNT(*) FROM rooms").fetchone()[0] == 0  # 残留清空
+    finally:
+        db.close()
+
+
+async def test_room_password_hash_persisted(tmp_path) -> None:
+    """password_hash 写入并读取(哈希存储,不落明文)。"""
+    db = SqliteDatabase(tmp_path / "data" / "app.db")
+    repo = SqliteRoomRepository(db)
+    try:
+        await repo.insert_room("ROOMPW", "u1", 1000.0, "a" * 64)
+        row = db.conn.execute(
+            "SELECT password_hash FROM rooms WHERE room_id = 'ROOMPW'"
+        ).fetchone()
+        assert row[0] == "a" * 64
+    finally:
+        db.close()

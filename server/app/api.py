@@ -53,6 +53,9 @@ ERROR_STATUS_MAP: dict[str, int] = {
     "UPLOAD_IN_PROGRESS": 409,
     "FILE_TOO_LARGE": 413,
     "ROOM_LIMIT_REACHED": 429,
+    "PASSWORD_REQUIRED": 400,
+    "PASSWORD_INCORRECT": 401,
+    "INVALID_PASSWORD": 400,
 }
 
 
@@ -129,8 +132,13 @@ def create_api_router(
 
     @router.post("/rooms")
     async def create_room(payload: dict) -> dict:
-        """创建房间(api.md 2.1):校验 → 签发房主凭证 → 写 DB 行。"""
-        cred = await room_manager.create_room(payload.get("nickname", ""), now=time.time())
+        """创建房间(api.md 2.1):校验 → 签发房主凭证 → 写 DB 行。
+
+        password 可选(N3):非空时房间启用密码,加入需携带。
+        """
+        cred = await room_manager.create_room(
+            payload.get("nickname", ""), now=time.time(), password=payload.get("password", "")
+        )
         return {
             "room_id": cred.room_id,
             "invite_url": _invite_url(settings, cred.room_id),
@@ -141,11 +149,13 @@ def create_api_router(
 
     @router.post("/rooms/{room_id}/join")
     async def join_room(room_id: str, payload: dict) -> dict:
-        """加入房间(api.md 2.2):校验存在与昵称 → 签发普通成员凭证。
+        """加入房间(api.md 2.2):校验存在/昵称/房间密码(N3)→ 签发凭证。
 
         满员(在线口径)在 WS auth 时以 close 4002 拒绝(design.md 4.4)。
         """
-        cred = await room_manager.join_room(room_id, payload.get("nickname", ""), now=time.time())
+        cred = await room_manager.join_room(
+            room_id, payload.get("nickname", ""), now=time.time(), password=payload.get("password", "")
+        )
         return {
             "room_id": cred.room_id,
             "user_id": cred.user_id,

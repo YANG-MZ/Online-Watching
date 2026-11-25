@@ -1,10 +1,10 @@
 # movie-togher · 多人在线同步观影平台
 
-基于 Web 的多人同步观影应用:创建观影房间,通过邀请链接邀请朋友;房主上传本地 MP4 视频,所有人的播放器实时跟随房主的播放、暂停、进度与倍速;每个人的音量、静音互不影响。
+基于 Web 的多人同步观影应用:创建观影房间,通过邀请链接邀请朋友;房主上传本地 MP4 视频,所有人的播放器实时跟随房主的播放、暂停、进度与倍速;每个人的音量、静音互不影响。可选房间密码,支持**单 URL 部署**(一个进程一个端口)并可通过 Cloudflare Tunnel 安全暴露给外网朋友。
 
 - 后端:Python 3.12 + FastAPI(WebSocket 信令 + HTTP Range 视频拉流 + SQLite 元数据)
 - 前端:Vue 3 + Vite + TypeScript(Pinia + vue-router)
-- 部署:单实例,优先本地笔记本电脑,局域网分享(需求 V1.2 / design T1.1)
+- 部署:单实例,优先本地笔记本电脑;支持分离部署或单 URL 部署(需求 V1.3 / design T1.2)
 
 > 详细需求与技术方案见 `doc/`(requirements / design / api / sync-protocol / implementation)。
 
@@ -18,8 +18,7 @@
 | [uv](https://docs.astral.sh/uv/) | 最新 | Python 依赖管理(本项目强制使用 uv) |
 | Node.js / npm | 18+(实测 v24) | 前端构建与依赖管理 |
 | 浏览器 | 桌面 Chrome / Edge | V1 优先适配 |
-
-局域网联调时,请确保各设备与主机在同一网段。
+| cloudflared(可选) | 最新 | 外网访问(Cloudflare Tunnel) |
 
 ---
 
@@ -32,9 +31,10 @@ cd movie-togher
 # 2. 后端:安装依赖(uv 会自动创建 .venv)
 uv sync
 
-# 3. 前端:安装依赖
+# 3. 前端:安装依赖并构建
 cd web
 npm install
+npm run build      # 产物在 web/dist/
 cd ..
 ```
 
@@ -57,80 +57,101 @@ npm run dev
 
 ---
 
-## 四、局域网部署(笔记本作为服务器)
+## 四、部署上线(单 URL 模式,推荐)
 
-### 步骤 1:构建前端(注入后端地址)
+单 URL 模式下,后端一个进程(端口 8000)同时提供页面与接口——**只有一个地址需要分享**。
 
-前端页面需要知道后端地址,构建时通过 `VITE_API_BASE_URL` 注入。
+### 步骤 1:开启后端托管前端
 
-```bash
-cd web
+编辑 `config.toml`:
 
-# Git Bash / macOS / Linux
-VITE_API_BASE_URL="http://<本机局域网IP>:8000" npm run build
-
-# Windows PowerShell
-$env:VITE_API_BASE_URL="http://<本机局域网IP>:8000"; npm run build
+```toml
+[frontend]
+serve_dist = true         # 由后端托管 web/dist
+dist_dir = "web/dist"
 ```
 
-`<本机局域网IP>` 换成你的局域网 IP(如 `192.168.1.10`;Windows 可用 `ipconfig` 查看)。
-构建产物在 `web/dist/`。
-
-### 步骤 2:托管前端静态文件(端口 8001,任选其一)
+### 步骤 2:启动服务
 
 ```bash
-# 方案 A:npx serve(零配置)
-cd web
-npx serve dist -l 8001
-
-# 方案 B:nginx(已安装时)
-# server { listen 8001; root <项目>/web/dist; location / { try_files $uri /index.html; } }
-```
-
-### 步骤 3:启动后端(端口 8000)
-
-```bash
-# 在项目根目录执行
 uv run uvicorn server.app.main:app --host 0.0.0.0 --port 8000
 ```
 
-> ⚠️ **workers 必须为 1**(默认即 1,不要加 `--workers`):房间在线状态保存在进程内存,多进程不共享(design.md 4.6 硬约束)。
+局域网朋友直接访问 `http://<本机局域网IP>:8000`。
 
-### 步骤 4:防火墙放行(仅局域网)
+> ⚠️ **workers 必须为 1**(默认即 1,不要加 `--workers`):房间在线状态保存在进程内存(design.md 4.6 硬约束)。
 
-Windows 首次启动会弹防火墙提示,勾选"专用网络";或手动放行 8000/8001 两个端口。
+### 步骤 3(可选):外网朋友访问 —— Cloudflare Tunnel
 
-### 步骤 5:分享
+不在同一局域网的朋友,通过 Cloudflare Tunnel 把本机服务安全暴露到公网(出站隧道,**路由器不开任何入站端口**,自动 HTTPS):
 
-把 `http://<本机局域网IP>:8001` 发给同一局域网的朋友,他们浏览器打开即进入首页。
+```bash
+# 方式一:临时快速隧道(免账号;URL 每次启动随机变化,适合临时聚会)
+cloudflared tunnel --url http://localhost:8000
 
-> 💡 建议将笔记本电源计划设为"接通电源时永不休眠"——合盖/休眠 = 服务中断,客户端会在服务恢复后自动重连(无需人工干预),但正在观看会被打断。
+# 方式二:命名隧道(URL 固定,需 Cloudflare 账号与域名,适合长期使用)
+# 完整流程(Windows,示例域名 movie.o7o7.dpdns.org):
+#   1) 域名接入 Cloudflare 后,在 DNS 页面点「继续前往激活」
+#   2) 安装:winget install --id Cloudflare.cloudflared(装完重开终端)
+#   3) 登录:cloudflared tunnel login(浏览器选择你的域名授权)
+#   4) 创建:cloudflared tunnel create movie-togher(记下 Tunnel ID 与凭据文件路径)
+#   5) 路由(自动创建 CNAME,无需在 DNS 页面手动添加):
+#      cloudflared tunnel route dns -f movie-togher movie.o7o7.dpdns.org
+#   6) 写 %USERPROFILE%\.cloudflared\config.yml:
+#        tunnel: <Tunnel-ID>
+#        credentials-file: C:\Users\<你>\.cloudflared\<Tunnel-ID>.json
+#        ingress:
+#          - hostname: movie.o7o7.dpdns.org
+#            service: http://localhost:8000
+#          - service: http_status:404
+#   7) 启动:cloudflared tunnel run movie-togher
+#   8) 验证:浏览器打开 https://movie.o7o7.dpdns.org/healthz
+cloudflared tunnel run movie-togher
+```
+
+把得到的 `https://xxx` 地址发给朋友即可,**一个 URL 全部搞定**(页面、接口、视频流同源,无需 CORS 与第二个端口)。
+
+> 替代方案:[Tailscale](https://tailscale.com/) 组网(朋友安装客户端,仅成员可见,安全性最高);frp 自建(需公网 VPS)。
+
+### 步骤 4:防火墙
+
+仅局域网访问时放行 8000(Windows 首次启动弹窗勾选"专用网络");使用 Cloudflare Tunnel 时**无需**开放任何入站端口(出站隧道)。
+
+> 💡 建议笔记本电源计划设为"接通电源时永不休眠"——合盖/休眠 = 服务中断,客户端会在服务恢复后自动重连。
+
+<details>
+<summary>旧方式:前后端分离部署(仍支持)</summary>
+
+构建时注入后端地址(`VITE_API_BASE_URL="http://<IP>:8000" npm run build`),`web/dist` 用 npx serve/nginx 单独托管(如 8001),`config.toml` 保持 `serve_dist = false`。适合前后端独立扩展的场景。
+
+</details>
 
 ---
 
 ## 五、使用流程
 
-1. **创建房间**:输入昵称 → 「创建房间」→ 系统生成房间 ID 与邀请链接,创建者即房主;
-2. **邀请加入**:点击「复制邀请链接」发给朋友;朋友打开链接、输入昵称即可进入(无需注册);
+1. **创建房间**:输入昵称 → 可选设置**房间密码**(≤64 字符;设置后加入必须输对密码)→ 「创建房间」,系统生成房间 ID 与邀请链接,创建者即房主;
+2. **邀请加入**:复制邀请链接发给朋友(设置了密码请一并告知);朋友打开链接、输入昵称与密码进入(无需注册);密码校验通过后断线重连无需再输;
 3. **上传视频**(仅房主):选择本地 MP4 文件(H.264 + AAC,≤4 GB)→ 上传,进度条可见;完成后所有成员自动加载播放器;
 4. **同步观看**(仅房主操作):播放 / 暂停 / 拖动进度条(松手生效)/ 调整倍速,全员实时跟随;
 5. **个人偏好**(每人独立):音量滑条、静音、全屏——只影响自己,刷新后保留;
-6. **中途加入**:新成员随时通过链接进入,自动定位到当前播放进度;
-7. **离开与解散**:成员点「退出房间」;房主退出后房主身份自动移交给最早加入的成员;房主可「解散房间」(全员移出、视频立即删除)。
+6. **中途加入**:新成员随时进入,自动定位到当前播放进度;
+7. **离开与解散**:成员点「退出房间」;房主退出后身份自动移交给最早加入的成员;房主可「解散房间」(全员移出、视频立即删除)。
 
-**房间生命周期**:全员离开 10 分钟后房间与视频自动清理;房主主动解散则立即清理;后端重启后历史房间失效(重启时自动清理残留文件)。
+**房间生命周期**:全员离开 10 分钟后房间与视频自动清理;房主主动解散立即清理;后端重启后历史房间失效(重启时自动清理残留文件与旧结构数据库)。
 
 ---
 
 ## 六、配置(config.toml)
 
-配置文件位于项目根目录 `config.toml`,**修改后重启服务生效**。
+配置文件位于项目根目录,**修改后重启服务生效**。
 
 | 配置节 | 关键项 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `[server]` | host / port | 0.0.0.0 / 8000 | 局域网访问需 0.0.0.0 |
 | `[frontend]` | base_url | 空 | 填前端地址后,邀请链接返回绝对地址 |
-| `[cors]` | allowed_origins | ["*"] | 分离部署建议收紧为实际前端地址 |
+| | serve_dist / dist_dir | false / web/dist | 单 URL 部署(T18) |
+| `[cors]` | allowed_origins | ["*"] | 分离部署建议收紧;单 URL 同源时无 CORS |
 | `[limits]` | max_rooms | 5 | 最大房间数(超出拒绝创建) |
 | | max_members_per_room | 10 | 每房间最大**在线**人数 |
 | | max_upload_bytes | 4 GiB | 上传大小上限 |
@@ -146,24 +167,24 @@ Windows 首次启动会弹防火墙提示,勾选"专用网络";或手动放行 8
 
 ---
 
-## 七、数据目录
+## 七、数据目录与下线
 
 ```
 data/
-├── app.db      # SQLite(房间/视频元数据,供清理任务追溯)
+├── app.db      # SQLite(房间/视频元数据,含密码哈希)
 ├── videos/     # 视频文件(UUID 重命名存储)
 ├── tmp/        # 上传中临时文件(中断即删,超龄兜底)
 └── logs/       # 运行日志(轮转)
 ```
 
-`data/` 已加入 `.gitignore`;**后端每次重启会清空其中全部房间与视频数据**(V1 接受的行为,需求 4.5)——需要长期保留的视频请在上传前自行备份。
+**下线(取消部署)**:停止后端(Ctrl + C 或结束进程)与前端托管进程即完成;`data/` 会保留到**下次启动**——下次启动时会自动清空全部房间与视频数据(需求 4.5),需要保留视频请在停止前复制 `data/videos/` 中的文件(原始文件名记录在 `data/app.db`)。
 
 ---
 
 ## 八、测试
 
 ```bash
-# 后端(108 项)
+# 后端(117 项)
 uv run pytest server/tests/
 
 # 前端(Vitest 29 项)
@@ -176,7 +197,19 @@ npm run build
 
 ---
 
-## 九、已知限制(V1)
+## 九、安全性说明
+
+| 层面 | 现状(V1.3) |
+| --- | --- |
+| 网络层 | 单 URL 部署 + Cloudflare Tunnel:路由器零入站暴露、自动 HTTPS;Tailscale 组网则仅成员可达 |
+| 身份 | 服务端签发 `session_token`(密码学随机),房主标记由服务端维护 |
+| 房间门槛 | 可选房间密码:SHA-256 哈希存储(不落明文),错误密码明确拒绝 |
+| 视频 | UUID 文件名不可猜测;"持有 URL 即可访问"仍成立(请控制链接传播范围) |
+| 越权 | 非房主调用房主接口一律服务端拒绝(403) |
+
+---
+
+## 十、已知限制(V1.3)
 
 | 限制 | 说明 |
 | --- | --- |
@@ -189,13 +222,14 @@ npm run build
 
 ---
 
-## 十、目录结构
+## 十一、目录结构
 
 ```
 ├── config.toml          # 运行配置
 ├── server/app/          # 后端(FastAPI:api / ws / room_manager / playback / db / video_storage / cleanup …)
 ├── server/tests/        # 后端 pytest
 ├── web/src/             # 前端(Vue 3:views / components / stores / api / sync)
+├── web/dist/            # 前端构建产物(npm run build 生成)
 ├── doc/                 # 需求、技术方案、接口协议、同步算法、实现进度
 └── data/                # 运行时数据(自动生成,gitignore)
 ```

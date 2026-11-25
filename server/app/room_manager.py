@@ -30,9 +30,11 @@ from server.app.db import RoomRepository, VideoRepository
 from server.app.models import Member, Room, SessionCredentials, VideoMeta, KnownUser
 from server.app.playback import PlaybackService
 from server.app.security import (
+    PASSWORD_MAX_LEN,
     generate_room_id,
     generate_session_token,
     generate_user_id,
+    hash_password,
 )
 from server.app.video_storage import VideoStorage
 
@@ -98,6 +100,27 @@ class UploadInProgressError(RoomError):
     message = "已有上传正在进行,请稍候"
 
 
+class PasswordRequiredError(RoomError):
+    """房间设置了密码但请求未携带(HTTP 400,N3)。"""
+
+    code = "PASSWORD_REQUIRED"
+    message = "该房间设置了密码,请输入房间密码"
+
+
+class PasswordIncorrectError(RoomError):
+    """房间密码错误(HTTP 401,N3)。"""
+
+    code = "PASSWORD_INCORRECT"
+    message = "房间密码错误"
+
+
+class InvalidPasswordError(RoomError):
+    """密码格式非法(超 64 字符等,HTTP 400,N3)。"""
+
+    code = "INVALID_PASSWORD"
+    message = "房间密码不能超过 64 个字符"
+
+
 @dataclass
 class RoomEvent:
     """领域事件:ws 层消费。
@@ -159,6 +182,27 @@ class RoomManager:
             raise InvalidNicknameError()
         return nick
 
+    @staticmethod
+    def _validate_password(password: str) -> str | None:
+        """规范化房间密码:空串 → None(无密码);超长拒绝(N3)。"""
+        pwd = (password or "").strip()
+        if not pwd:
+            return None
+        if len(pwd) > PASSWORD_MAX_LEN:
+            raise InvalidPasswordError()
+        return hash_password(pwd)
+
+    @staticmethod
+    def _check_room_password(room: Room, password: str) -> None:
+        """加入时的房间密码校验(N3):门槛在 HTTP join,token 即已验证门票。"""
+        if room.password_hash is None:
+            return  # 无密码房间
+        pwd = (password or "").strip()
+        if not pwd:
+            raise PasswordRequiredError()
+        if hash_password(pwd) != room.password_hash:
+            raise PasswordIncorrectError()
+
     def _require_host(self, room: Room, session_token: str) -> str:
         user_id = self._user_id_of(room, session_token)
         if room.host_user_id != user_id:
@@ -185,12 +229,15 @@ class RoomManager:
 
     # ---------- 房间生命周期(需求 3.1.1/3.1.2/3.1.6/3.1.7) ----------
 
-    async def create_room(self, nickname: str, now: float) -> SessionCredentials:
+    async def create_room(self, nickname: str, now: float, password: str = "") -> SessionCredentials:
         """创建房间:昵称/上限校验(内存口径)→ 签发房主凭证 → 写 DB。
 
-        创建者不占在线名额(进入房间以 WS auth 为准,design.md 4.4)。
+        password 可选(N3):非空时房间启用密码,加入需携带;创建者即
+        房主,天然知晓密码。创建者不占在线名额(进入房间以 WS auth 为准,
+        design.md 4.4)。
         """
         nick = self._validate_nickname(nickname)
+        password_hash = self._validate_password(password)
         if len(self._rooms) >= self._settings.limits.max_rooms:
             raise RoomLimitReachedError()
 
@@ -200,7 +247,7 @@ class RoomManager:
 
         user_id = generate_user_id()
         token = generate_session_token()
-        room = Room(room_id=room_id, host_user_id=user_id, created_at=now)
+        room = Room(room_id=room_id, host_user_id=user_id, created_at=now, password_hash=password_hash)
         room.known_users[user_id] = KnownUser(user_id, nick, now)
         room.credentials[token] = user_id
         # 创建即空房倒计时:创建者从未连 WS 时房间按配置过期(api.md 2.1);
@@ -208,16 +255,21 @@ class RoomManager:
         room.empty_since = now
         self._rooms[room_id] = room
 
-        await self._room_repo.insert_room(room_id, user_id, now)
+        await self._room_repo.insert_room(room_id, user_id, now, password_hash)
         return SessionCredentials(room_id=room_id, user_id=user_id, session_token=token, is_host=True)
 
-    async def join_room(self, room_id: str, nickname: str, now: float) -> SessionCredentials:
-        """加入(HTTP 侧):校验房间存在与昵称 → 签发普通成员凭证。
+    async def join_room(
+        self, room_id: str, nickname: str, now: float, password: str = ""
+    ) -> SessionCredentials:
+        """加入(HTTP 侧):校验房间存在与昵称与房间密码(N3)→ 签发凭证。
 
-        满员校验延后至 WS auth(在线口径,decision T13 / design.md 4.4)。
+        密码是加入的唯一门槛:通过即签发 token,token 成为已验证门票,
+        WS 重连沿用无需重复输入密码。满员校验延后至 WS auth(在线口径,
+        decision T13 / design.md 4.4)。
         """
         nick = self._validate_nickname(nickname)
         room = self._get_room(room_id)
+        self._check_room_password(room, password)
 
         user_id = generate_user_id()
         token = generate_session_token()

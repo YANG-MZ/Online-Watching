@@ -10,6 +10,10 @@ port = 8000
 # 前端站点地址,用于拼接邀请链接 {base_url}/rooms/{room_id};
 # 为空时邀请链接仅返回相对路径,由前端自行补全。
 base_url = ""
+# 单 URL 部署(design T18):true 时由后端托管前端构建产物(dist_dir),
+# 一个端口同时提供页面与接口,同源无 CORS。开启前先完成前端构建。
+serve_dist = false
+dist_dir = "web/dist"
 
 [cors]
 # 前端 origin 列表;分离部署下按实际前端地址收紧,如 ["http://192.168.1.10:8001"]

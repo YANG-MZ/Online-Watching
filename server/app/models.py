@@ -90,6 +90,7 @@ class Room:
     video: VideoMeta | None = None
     uploading: bool = False  # 上传互斥锁(design.md 4.7)
     empty_since: float | None = None
+    password_hash: str | None = None  # 房间密码哈希(N3);None 表示无密码
 
 
 @dataclass

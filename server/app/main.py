@@ -21,6 +21,8 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from server.app.api import create_api_router, create_media_router, register_error_handlers
 from server.app.cleanup import CleanupTask
@@ -99,8 +101,44 @@ def build_app(settings: Settings | None = None) -> FastAPI:
         """健康检查(api.md 2.7)。"""
         return {"status": "ok"}
 
+    # 单 URL 模式(design.md T18):后端托管前端构建产物,同源无 CORS。
+    # 必须在 API/media/ws 路由之后注册,catch-all 才不会抢占接口路径。
+    if settings.frontend.serve_dist:
+        _mount_spa(app, Path(settings.frontend.dist_dir))
+
     register_error_handlers(app)
     return app
+
+
+def _mount_spa(app: FastAPI, dist_dir: Path) -> None:
+    """托管前端构建产物(design.md T18,serve_dist 开启时)。
+
+    - /assets/* 由 StaticFiles 服务(vite 产物,带指纹);
+    - 其余 GET 路径:命中真实文件则返回,否则回退 index.html(SPA 深链接);
+    - api/media/ws 前缀与路径穿越始终 404,不返回页面。
+    """
+    index = dist_dir / "index.html"
+    assets = dist_dir / "assets"
+    if not (index.is_file() and assets.is_dir()):
+        return  # 产物不存在:跳过托管,按分离部署使用
+
+    app.mount("/assets", StaticFiles(directory=assets), name="spa-assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False, response_model=None)
+    async def spa_fallback(full_path: str) -> FileResponse | JSONResponse:
+        if full_path.startswith(("api/", "media/", "ws/", "healthz")):
+            return JSONResponse(
+                status_code=404, content={"code": "NOT_FOUND", "message": "资源不存在"}
+            )
+        candidate = (dist_dir / full_path).resolve()
+        # 路径穿越防护:解析后必须仍在 dist 目录内
+        if (
+            full_path
+            and candidate.is_file()
+            and str(candidate).startswith(str(dist_dir.resolve()))
+        ):
+            return FileResponse(candidate)
+        return FileResponse(index)
 
 
 app = build_app()  # 供 uvicorn 引用:server.app.main:app

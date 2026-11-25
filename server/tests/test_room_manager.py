@@ -14,6 +14,9 @@ from server.app.models import VideoMeta
 from server.app.playback import PlaybackService
 from server.app.room_manager import (
     InvalidNicknameError,
+    InvalidPasswordError,
+    PasswordIncorrectError,
+    PasswordRequiredError,
     RoomFullError,
     RoomLimitReachedError,
     RoomManager,
@@ -492,3 +495,37 @@ async def test_resolve_member_and_touch(env) -> None:
 async def _chunks(*chunks: bytes):
     for c in chunks:
         yield c
+
+
+# ---------- 房间密码(N3) ----------
+
+async def test_create_room_with_password_and_join_flow(env) -> None:
+    """创建带密码房间:无密码/错密码/对密码三种加入结果。"""
+    m, *_ = env
+    host_cred = await m.create_room("Alice", now=1000.0, password="secret123")
+    room = m.get_room(host_cred.room_id)
+    assert room.password_hash is not None
+    assert room.password_hash != "secret123"  # 哈希存储,不落明文
+
+    with pytest.raises(PasswordRequiredError):
+        await m.join_room(host_cred.room_id, "Bob", now=1001.0)  # 未携带
+    with pytest.raises(PasswordIncorrectError):
+        await m.join_room(host_cred.room_id, "Bob", now=1001.0, password="wrong")
+
+    cred = await m.join_room(host_cred.room_id, "Bob", now=1001.0, password="secret123")
+    assert cred.session_token  # 正确密码签发凭证,重连无需再输
+
+
+async def test_create_room_without_password_open_join(env) -> None:
+    """无密码房间:加入无需密码(兼容现状)。"""
+    m, *_ = env
+    host_cred = await m.create_room("Alice", now=1000.0)
+    assert m.get_room(host_cred.room_id).password_hash is None
+    cred = await m.join_room(host_cred.room_id, "Bob", now=1001.0)
+    assert cred.session_token
+
+
+async def test_password_too_long_rejected(env) -> None:
+    m, *_ = env
+    with pytest.raises(InvalidPasswordError):
+        await m.create_room("Alice", now=1000.0, password="x" * 65)

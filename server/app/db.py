@@ -19,13 +19,14 @@ from pathlib import Path
 from server.app.models import VideoMeta
 
 # 结构版本号(写 PRAGMA user_version;表结构变更时递增)
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2  # v2:rooms 增加 password_hash(N3,2026-11-15)
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS rooms (
-    room_id      TEXT PRIMARY KEY,
-    created_at   REAL NOT NULL,            -- unix 秒
-    host_user_id TEXT NOT NULL             -- 仅追溯用,重启不恢复
+    room_id       TEXT PRIMARY KEY,
+    created_at    REAL NOT NULL,           -- unix 秒
+    host_user_id  TEXT NOT NULL,           -- 仅追溯用,重启不恢复
+    password_hash TEXT                     -- 房间密码哈希(N3);NULL = 无密码
 );
 
 CREATE TABLE IF NOT EXISTS videos (
@@ -56,6 +57,11 @@ class SqliteDatabase:
         self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
         with self._lock:
             self._conn.execute("PRAGMA journal_mode=WAL")
+            version = self._conn.execute("PRAGMA user_version").fetchone()[0]
+            if version != SCHEMA_VERSION:
+                # 结构变更:重启后内存房间为空,旧数据本就属于待清理残留
+                # (需求 4.5),直接重建(降级/升级均按此处理)。
+                self._conn.executescript("DROP TABLE IF EXISTS rooms; DROP TABLE IF EXISTS videos;")
             self._conn.executescript(_SCHEMA_SQL)
             self._conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             self._conn.commit()
@@ -77,7 +83,13 @@ class RoomRepository(ABC):
     """rooms 表仓储。"""
 
     @abstractmethod
-    async def insert_room(self, room_id: str, host_user_id: str, created_at: float) -> None:
+    async def insert_room(
+        self,
+        room_id: str,
+        host_user_id: str,
+        created_at: float,
+        password_hash: str | None = None,
+    ) -> None:
         """创建房间时写入(读写时机表:design.md 第 5 节)。"""
 
     @abstractmethod
@@ -95,15 +107,28 @@ class SqliteRoomRepository(RoomRepository):
     def __init__(self, database: SqliteDatabase) -> None:
         self._db = database
 
-    async def insert_room(self, room_id: str, host_user_id: str, created_at: float) -> None:
-        await asyncio.to_thread(self._insert_room, room_id, host_user_id, created_at)
+    async def insert_room(
+        self,
+        room_id: str,
+        host_user_id: str,
+        created_at: float,
+        password_hash: str | None = None,
+    ) -> None:
+        await asyncio.to_thread(self._insert_room, room_id, host_user_id, created_at, password_hash)
 
-    def _insert_room(self, room_id: str, host_user_id: str, created_at: float) -> None:
+    def _insert_room(
+        self,
+        room_id: str,
+        host_user_id: str,
+        created_at: float,
+        password_hash: str | None,
+    ) -> None:
         with self._db.lock:
             # 主键冲突时覆盖(room_id 生成端有去重重试,此处兜底不崩溃)
             self._db.conn.execute(
-                "INSERT OR REPLACE INTO rooms (room_id, host_user_id, created_at) VALUES (?, ?, ?)",
-                (room_id, host_user_id, created_at),
+                "INSERT OR REPLACE INTO rooms (room_id, host_user_id, created_at, password_hash) "
+                "VALUES (?, ?, ?, ?)",
+                (room_id, host_user_id, created_at, password_hash),
             )
             self._db.conn.commit()
 
